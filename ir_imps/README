@@ -1,0 +1,22 @@
+Oh boy, setup is a pain.
+
+Need to get usb on VirtualBox
+-- install Vbox 5.1
+-- install Vbox extensions
+-- restart a few times
+-- make sure not to corrupt VBox version on host
+
+
+-- to view webcam
+sudo apt install cheese
+
+
+http://www.pyimagesearch.com/2015/06/22/install-opencv-3-0-and-python-2-7-on-ubuntu/
+
+
+I really want to do a real-time deep-dream! That would be truly new and unique
+http://www.pyimagesearch.com/2015/08/03/deep-dream-visualizing-every-layer-of-googlenet/
+
+installing Caffe:
+https://gist.github.com/titipata/f0ef48ad2f0ebc07bcb9
+http://caffe.berkeleyvision.org/install_apt.html
