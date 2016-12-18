@@ -26,16 +26,22 @@ def display_lines(diff, orginal, colors=None, split_count=None):
 	if not split_count:
 		split_count = len(colors)
 
-	lines = np.empty(orginal.shape, dtype=np.uint8)
-	partition_size = lines.shape[1] / len(colors)
+	sqrs = np.empty(orginal.shape, dtype=np.uint8)
+	partition_size = sqrs.shape[1] / len(colors)
 	column_size = diff.shape[1] / len(colors)
 
 	# argmax = max(range(len(colors)), key=lambda c: np.sum(diff[:,c*diff_partition_size:c*diff_partition_size+diff_partition_size]))
-	argmax = max(range(split_count), key=lambda i: np.sum(column(diff, i, column_size))
-	argmax = max(itertools.product(range(split_count)), key=lambda i,j: np.sum(square(diff, i, j, column_size)))
+	# argmax = max(range(split_count), key=lambda i: np.sum(column(diff, i, column_size)))
+	# for a in itertools.product(range(split_count), repeat=2):
+		# print a
+	amax = max(itertools.product(range(split_count), repeat=2), key=lambda i: np.sum(square(diff, i[0], i[1], column_size)))
 
-	lines[argmax*partition_size:argmax*partition_size+partition_size,argmax*partition_size:argmax*partition_size+partition_size] = colors[argmax]
-	cv2.imshow('lines', lines)
+	psize = partition_size
+	csize = column_size
+	sqrs[psize*amax[0]:psize*(amax[0]+1), psize*amax[1]:psize*(amax[1]+1)] = colors[amax[0]]
+
+	# lines[argmax*partition_size:argmax*partition_size+partition_size,argmax*partition_size:argmax*partition_size+partition_size] = colors[argmax]
+	cv2.imshow('sqr', sqrs)
 
 def column(image, index, step):
 	return image[:, step*index:step*(index+1)]
@@ -48,8 +54,6 @@ def split_columns(num, image):
 	for i in range(num):
 		yield image[:,cs*i:cs*(i+1)] 
 
-def split_squares(num
-
 def main():
 	
 	background = np.empty([])
@@ -58,19 +62,21 @@ def main():
 	while True:
 		ret, frame = capture.read()
 		height, width, channels = frame.shape
-	
+
 		# block size for average pooling	
 		bs = min(20, height, width)		
 
 		# average pooling
-		average = np.empty((height/bs,width/bs, 3))
-		for a in range(0, height, bs):
-			for b in range(0, width, bs):
-				average[a,b,c] = np.mean(frame[a:a+bs, b:b+bs,:], axis=2)
-#				for c in range(channels):
-#					average[a,b,c] = frame[a:a+bs, b:b+bs,c].mean()
-
-
+		average = np.empty((height/bs, width/bs, channels))
+		# for a in range(0, height-bs, bs):
+			# for b in range(0, width-bs, bs):
+		for a in range(height/bs):
+			for b in range(width/bs):
+				# print np.mean(frame[a:a+bs, b:b+bs,:], axis=(0,1)).shape
+				# exit(1)
+				average[a,b,:] = np.mean(frame[a*bs:a*(bs+1), b*bs:b*(bs+1),:], axis=(0,1))
+				# for c in range(channels):
+					# average[a,b,c] = frame[a*bs:a*(bs+1), b*bs:b*(bs+1),c].mean()
 
 		# calculate difference matrix
 		if background.size > 1:
