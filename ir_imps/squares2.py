@@ -3,6 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.misc import imresize
 import itertools
+from skimage import color
+import argparse
 
 def heardEnter():
 	i,o,e = select.select([sys.stdin],[],[],0.0001)
@@ -34,7 +36,8 @@ def display_lines(diff, orginal, colors=None, split_count=None):
 	# argmax = max(range(split_count), key=lambda i: np.sum(column(diff, i, column_size)))
 	# for a in itertools.product(range(split_count), repeat=2):
 		# print a
-	amax = max(itertools.product(range(split_count), repeat=2), key=lambda i: np.sum(square(diff, i[0], i[1], column_size)))
+
+	amax = max(itertools.product(range(split_count), repeat=2), key=lambda i: mean(diff, i[0], i[1], column_size))
 
 	psize = partition_size
 	csize = column_size
@@ -46,8 +49,8 @@ def display_lines(diff, orginal, colors=None, split_count=None):
 def column(image, index, step):
 	return image[:, step*index:step*(index+1)]
 
-def square(image, i, j, step):
-	return image[step*i:step*(i+1), step*j:step*(j+1)]	
+def mean(image, i, j, step):
+	return np.mean(image[step*i:step*(i+1), step*j:step*(j+1)])
 
 def split_columns(num, image):
 	cs = image.shape[1] / num # column size
@@ -88,7 +91,10 @@ def main():
 			for c in range(channels):
 				# TODO - convert to different color space
 
+				# lab_background = color.rgb2lab(background)
+				# lab_average = color.rgb2lab(average)
 				diff[:,:,c] = np.abs(np.subtract(background[:,:,c], average[:,:,c]))
+				# diff[:,:,c] = np.linalg.norm(np.subtract(background[:,:,c], average[:,:,c]))
 				plt.plot(diff[:,:,c].flatten())
 				plt.draw()
 				cv2.imshow('diff', imresize(diff, 20.0))
@@ -107,6 +113,26 @@ def main():
 
 	capture.release()
 	cv2.destroyAllWindows()
+
+
+
+
+def get_args():
+	parser = argparse.ArgumentParser(description="Colorize video based on changes.")
+
+	parser.add_argument("--pattern", type=str, required=True, choices=["line", "square"], help="Pattern to colorize video.")
+	parser.add_argument("--update-freq", type=float, required=False, default=20, help="Update background with this periodicty (s).")
+
+	check_args(args)
+	return None
+
+def check_args():
+	pass
+
+def main():
+	args = get_args()
+	
+
 
 if __name__ == '__main__':
 	main()
