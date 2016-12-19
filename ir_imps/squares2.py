@@ -1,3 +1,6 @@
+# FOR IRVING - KINECT COMMAND: freenect-glview
+
+
 import cv2, freenect, sys, os, select, argparse, time
 import numpy as np
 import matplotlib.pyplot as plt
@@ -33,7 +36,7 @@ class KinectVideo(Video):
 
 	@staticmethod
 	def pretty_depth(depth):
-		np.clip(depth, 0, 2**10 - 1, depth)
+		np.clip(depth, 0, 2**10-0.5, depth)
 		depth >>= 2
 		depth = depth.astype(np.uint8)
 		return depth
@@ -57,17 +60,17 @@ class KinectVideo(Video):
 
 class Colorizer:
 
-	COLORS = [
-		(255, 0, 0),	# red
-		(255, 127, 0),	# orange
-		(255, 255, 0),	# yellow
-		(0, 255, 0),	# green
-		(0, 0, 255),	# blue
-		(75, 0, 130),	# indigo
-		(139, 0, 255)	# violet
-	]
+	COLORS = {
+		'blue':    (255, 0, 0),	# red
+		'orange': (0, 127, 255),	# orange
+		'yellow': (0, 255, 255),	# yellow
+		'green' : (0, 255, 0),	# green
+		'red'  : (0, 0, 255),	# blue
+		'indigo': (130, 0, 75),	# indigo
+		'violet': (255, 0, 139)	# violet
+	}
 
-	def __init__(self, pattern):
+	def __init__(self, pattern, color):
 		self.camera = KinectVideo(feed='depth')
 
 		# Select pattern algorithm
@@ -83,20 +86,31 @@ class Colorizer:
 
 		self.frame_buffer = deque()
 		self.frame_buffer_sample_count = 0
-		self.frame_buffer_sampling_period = 2
-		self.frame_buffer_capacity = 50
+		self.frame_buffer_sampling_period = 5
+		self.frame_buffer_capacity = 100
 		self.global_variance = None
 
 		self.tt = 10
 		self.tw = self.frame_buffer_capacity / (self.camera.frame_rate * 1.0 / self.frame_buffer_sampling_period)
 		self.c = 1
 
-		self.blur_size = 20
+		self.blur_size = 10
+		self.prev_frame = None
+
+		self.pick_color = color
 
 	@staticmethod
 	def show(displays, shape):
 		for name, frame in displays.items():
-			cv2.imshow(name, imresize(frame, shape, interp="nearest"))
+			old_shape = shape
+			if name == 'pattern':
+				cv2.namedWindow("pattern", cv2.WND_PROP_FULLSCREEN)          
+				cv2.setWindowProperty("pattern", cv2.WND_PROP_FULLSCREEN, cv2.cv.CV_WINDOW_FULLSCREEN)
+				shape = (1080, 1920, 3)
+				cv2.imshow(name, imresize(frame, shape, interp="nearest"))
+			else:
+				cv2.imshow(name, imresize(frame, shape, interp="nearest"))
+			shape = old_shape
 
 	@staticmethod
 	def snapshot(frame):
@@ -147,10 +161,11 @@ class Colorizer:
 			self.global_variance = frame_buffer_variance
 			self.frame_buffer = deque() # empty queue
 			self.start_time = time.time()
+			self.prev_frame = np.zeros(frame.shape)
 		else:
 			self.frame_buffer.clear()
 
-	def run(self, blur_size=10):
+	def run(self, blur_size=2):
 		displays = {}
 		self.background = None
 		self.start_time = 0
@@ -170,10 +185,7 @@ class Colorizer:
 			if snap is not None:
 				self.start_time = time.time()
 				self.background = self.blur(snap)
-				# self.global_variance = np.var(self.background, axis=2)
-				# self.global_variance = np.full(self.background.shape, 100.0, dtype=np.float)
 				self.global_variance = None
-				# NOTE: ^ this makes no sense and should be changed
 			elif self.background is None:
 				continue
 
@@ -184,20 +196,23 @@ class Colorizer:
 			diff = np.abs(np.subtract(self.background, blurred))
 
 			a = Colorizer.pattern_variance(diff, len(Colorizer.COLORS))
-			b = 100
+			b = 40
 			if self.global_variance is not None:
 				b = Colorizer.pattern_variance(self.global_variance, len(Colorizer.COLORS))
 
+			if self.prev_frame is None:
+				self.prev_frame = np.zeros(frame.shape)
+
 			if a+1 <= b:
 				print 'SKIP', a, b
-				black = np.zeros(frame.shape)
-				displays['pattern'] = black
-				displays['difference'] = black
+				displays['pattern'] = self.prev_frame
+				displays['difference'] = self.prev_frame
 				continue
 			else:
 				print 'DISP', a, b
 
 			pattern = self.patternize(diff, shape=frame.shape)
+			self.prev_frame = pattern
 			displays['pattern'] = pattern
 			displays['difference'] = diff
 
@@ -216,13 +231,19 @@ class Colorizer:
 		h, w, c = pattern.shape
 
 		# Define interval size of pattern
-		step = w / (num_cols if num_cols else len(Colorizer.COLORS))
+		step = w / num_cols
 
 		# Calculate column of max difference to place pattern
-		max_col = max(range(num_cols), key=lambda s: np.mean(difference_image[:, step*s:step*(s+1)]))
+		max_col = max(range(num_cols+1), key=lambda s: np.mean(difference_image[:, step*s:step*(s+1)]))
 
 		# Uniquely pick color for valid list
-		color_pick = Colorizer.COLORS[max_col % len(Colorizer.COLORS)]
+		color_pick = None
+		if self.pick_color == 'all':
+			pick = max_col % len(Colorizer.COLORS) + 1
+			for i, color in zip(range(pick), Colorizer.COLORS):
+				color_pick = Colorizer.COLORS[color]
+		else:
+			color_pick = Colorizer.COLORS[self.pick_color]
 
 		# Broadcast color to line to make pattern
 		pattern[:, step*max_col:step*(max_col+1)] = color_pick
@@ -242,41 +263,16 @@ class Colorizer:
 		max_square = max(squares, key=lambda s: np.mean(difference_image[step*s[0]:step*(s[0]+1), step*s[1]:step*(s[1]+1)]))
 
 		# Uniquely pick color for valid list
-		color_pick = Colorizer.COLORS[sum(max_square) % len(Colorizer.COLORS)]
+		color_pick = None
+		if self.pick_color == 'all':
+			pick = sum(max_square) % len(Colorizer.COLORS) + 1
+			for i, color in zip(range(pick), Colorizer.COLORS):
+				color_pick = Colorizer.COLORS[color]
+		else:
+			color_pick = Colorizer.COLORS[self.pick_color]
 
 		# Broadcast color to square to make pattern
 		pattern[step*max_square[0]:step*(max_square[0]+1), step*max_square[1]:step*(max_square[1]+1)] = color_pick
-
-		return pattern
-
-	def square2(self, difference_image, num_cols=None, num_rows=None, shape=None):
-		num_cols = num_cols if num_cols else len(Colorizer.COLORS)
-		pattern = np.zeros(difference_image.shape, dtype=np.uint8)
-		h, w, c = pattern.shape
-
-		# Define interval size of pattern
-		step = w / num_cols
-
-		# Calculate square of max difference to place pattern
-		squares = product(range(num_cols), repeat=2) # generator of tuples (int, int)
-		max_square = max(squares, key=lambda s: np.mean(difference_image[step*s[0]:step*(s[0]+1), step*s[1]:step*(s[1]+1)]))
-
-		# set position and velocity
-		if self.state is None:
-			self.state = (max_square, (0, 0))
-
-		# Calculate new position w/physics based dampening
-		new_position = max_square
-		if not Colorizer.at_edge(max_square, (num_cols, num_cols)):
-			new_position = self.dampen(max_square)
-		else:
-			self.state = None
-
-		# Uniquely pick color for valid list
-		color_pick = Colorizer.COLORS[0]
-
-		# Broadcast color to square to make pattern
-		pattern[step*new_position[0]:step*(new_position[0]+1), step*new_position[1]:step*(new_position[1]+1)] = color_pick
 
 		return pattern
 
@@ -298,7 +294,13 @@ class Colorizer:
 		max_square = max(squares, key=lambda s: np.mean(difference_image[step*s[0]:step*(s[0]+1), step*s[1]:step*(s[1]+1)]))
 
 		# Uniquely pick color for valid list
-		color_pick = Colorizer.COLORS[0]
+		color_pick = None
+		if self.pick_color == 'all':
+			pick = sum(max_square) % len(Colorizer.COLORS) + 1
+			for i, color in zip(range(pick), Colorizer.COLORS):
+				color_pick = Colorizer.COLORS[color]
+		else:
+			color_pick = Colorizer.COLORS[self.pick_color]
 
 		boundary = 5 # TODO - dont hardcode magic numbers
 		h2, w2, c = pattern.shape
@@ -312,6 +314,8 @@ class Colorizer:
 
 		# Broadcast color to square to make pattern
 		# pattern[step*max_square[0]:step*(max_square[0]+1), step*max_square[1]:step*(max_square[1]+1)] = color_pick
+
+
 
 		return pattern
 
@@ -354,6 +358,7 @@ def get_args():
 
 	parser.add_argument("--pattern", type=str, required=True, choices=["line", "square", "crosshair"], help="Pattern to colorize video.")
 	parser.add_argument("--update-freq", type=float, required=False, default=20, help="Update background with this periodicty (s).")
+	parser.add_argument("--color", type=str, required=False, choices=["all", "red", "orange", "yellow", "green", "blue", "violet", "indigo"], default="all", help="Color choice for pattern.") 
 
 	args = parser.parse_args()
 	check_args(args)
@@ -364,7 +369,7 @@ def check_args(args):
 
 def main():
 	args = get_args()
-	c = Colorizer(args.pattern)
+	c = Colorizer(args.pattern, args.color)
 	c.run()
 
 
