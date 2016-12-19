@@ -1,5 +1,4 @@
-# FOR IRVING - KINECT COMMAND: freenect-glview
-
+#!/usr/bin/env python
 
 import cv2, freenect, sys, os, select, argparse, time
 import numpy as np
