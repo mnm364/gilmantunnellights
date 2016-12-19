@@ -1,16 +1,16 @@
-import cv2, sys, os, select, argparse
+import cv2, freenect, sys, os, select, argparse, time
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.misc import imresize
 from skimage import color
 from itertools import product
 from collections import deque
-import time
+
 
 class Video:
-	def __init__(self):
+	def __init__(self, frame_rate=30):
 		self.capture = cv2.VideoCapture(0)
-		self.frame_rate = 30
+		self.frame_rate = frame_rate
 
 	def stream(self):
 		while True:
@@ -25,6 +25,28 @@ class Video:
 				break
 			# NOTE: ^ this just doesn't work...
 
+class KinectVideo(Video):
+	
+	def __init__(self, frame_rate=30):
+		self.frame_rate = frame_rate
+
+	def stream(self, feed='rgb'):
+		capture = None
+		if feed == 'rgb':
+			capture = lambda: cv2.cvtColor(freenect.sync_get_video()[0], cv2.COLOR_BGR2RGB)
+		elif feed == 'depth':
+			capture = lambda: freenect.synch_get_depth()[0] 
+		else:
+			raise Exception('Invalid video type for Kinect Sensor')
+
+		while True:
+			frame = capture()
+			yield frame
+			
+			# Exit capture
+			if cv2.waitKey(1) & 0xFF == ord('q'):
+				break
+
 class Colorizer:
 
 	COLORS = [
@@ -38,7 +60,7 @@ class Colorizer:
 	]
 
 	def __init__(self, pattern):
-		self.camera = Video()
+		self.camera = KinectVideo()
 
 		# Select pattern algorithm
 		self.patternize = None
