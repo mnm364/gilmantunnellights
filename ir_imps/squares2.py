@@ -143,6 +143,8 @@ class Colorizer:
 
 			self.calibrate(frame)
 			blurred = Colorizer.blur(frame)
+			displays['discrete blur'] = blurred
+
 			diff = Colorizer.difference(self.background, blurred)
 
 			a = Colorizer.pattern_variance(diff, len(Colorizer.COLORS))
@@ -155,7 +157,6 @@ class Colorizer:
 				black = np.zeros(frame.shape)
 				displays['pattern'] = black
 				displays['difference'] = black
-				displays['discrete blur'] = black
 				continue
 			else:
 				print 'DISP', a, b
