@@ -4,10 +4,13 @@ import matplotlib.pyplot as plt
 from scipy.misc import imresize
 from skimage import color
 from itertools import product
+from collections import deque
+import time
 
 class Video:
 	def __init__(self):
 		self.capture = cv2.VideoCapture(0)
+		self.frame_rate = 30
 
 	def stream(self):
 		while True:
@@ -48,37 +51,156 @@ class Colorizer:
 
 		self.state = None # (positionx, positiony, velocityx, velocityy)
 
+		self.frame_buffer = deque()
+		self.frame_buffer_sample_count = 0
+		self.frame_buffer_sampling_period = 2
+		self.frame_buffer_capacity = 50
+		self.global_variance = None
+
+		self.tt = 10
+		self.tw = self.frame_buffer_capacity / (self.camera.frame_rate * 1.0 / self.frame_buffer_sampling_period)
+		self.c = 1
+
+	@staticmethod
+	def show(displays, shape):
+		for name, frame in displays.items():
+			cv2.imshow(name, imresize(frame, shape, interp="nearest"))
+
+	@staticmethod
+	def snapshot(frame):
+		if heardEnter() or cv2.waitKey(1)&0xFF == ord('s'):
+			return frame
+		return None
+
+	# Take average across image (reduce computation)
+	@staticmethod
+	def blur(image, blur_size=30):
+		h, w, c = image.shape
+		bs = min(blur_size, h, w)
+		average = np.empty((h / bs, w / bs, c))
+		for i in range(h / bs):
+			for j in range(w / bs):
+				average[i, j, :] = np.mean(image[i*bs:i*(bs+1), j*bs:j*(bs+1), :], axis=(0,1), dtype=np.uint16)
+		return average
+
+	def calibrate(self, frame):
+		self.frame_buffer_sample_count += 1
+		if self.frame_buffer_sample_count < self.frame_buffer_sampling_period:
+			return
+		self.frame_buffer.append(frame)
+		self.frame_buffer_sample_count = 0
+
+		if len(self.frame_buffer) < self.frame_buffer_capacity:
+			return
+
+		print 'CALIBRATING'
+
+		np_frame_buffer = np.stack([f for f in self.frame_buffer], axis=0)
+		frame_buffer_mean = np.mean(np_frame_buffer, axis=0)
+		# print frame_buffer_mean
+		# vv = np.sum((np_frame_buffer - frame_buffer_mean)**2, axis=0) / len(self.frame_buffer)
+		frame_buffer_variance = np.var(np_frame_buffer, axis=0)
+		print frame_buffer_variance
+		# print 'VV', vv
+
+		f = lambda v, t: \
+			v + 1 if t < self.tt else \
+			pow((float(t) - self.tt) / self.tw, self.c) * (v + 1) + v
+		print 'A', np.mean(frame_buffer_variance) + 1
+		do = False
+		if self.global_variance is None:
+			do = True
+		# print 'B', f(np.mean(self.global_variance), time.time() - self.start_time)
+		if do or np.mean(frame_buffer_variance) + 1 <= f(np.mean(self.global_variance), time.time() - self.start_time):
+			self.background = Colorizer.blur(frame_buffer_mean)
+			self.global_variance = frame_buffer_variance
+			self.frame_buffer = deque() # empty queue
+			self.start_time = time.time()
+		else:
+			self.frame_buffer.clear()
+
 	def run(self, block_size=20):
-		background = np.empty([])
+		displays = {}
+		self.background = None
+		self.start_time = 0
 		for frame in self.camera.stream():
 			h, w, c = frame.shape
-			block_size = min(block_size, h, w)
 
-			# Take average across image (reduce computation)
-			average = np.empty((h / block_size, w / block_size, c))
-			for i in range(h / block_size):
-				for j in range(w / block_size):
-					bs = block_size
-					average[i, j, :] = np.mean(frame[i*bs:i*(bs+1), j*bs:j*(bs+1), :], axis=(0,1))
+			Colorizer.show(displays, frame.shape)
+			displays['raw'] = frame
 
-			if background.size > 1:
-				difference = np.empty(average.shape, dtype=np.uint8)
-				for chan in range(c):
-					difference[:,:,chan] = np.abs(np.subtract(background[:,:,chan], average[:,:,chan]))
-				pattern = self.patternize(difference, shape=frame.shape)
-				cv2.imshow('pattern', imresize(pattern, frame.shape, interp="nearest"))
-				cv2.imshow("background", imresize(background, frame.shape, interp="nearest"))
-				cv2.imshow("difference", imresize(difference, frame.shape, interp="nearest"))
+			# Take background picture override
+			snap = Colorizer.snapshot(frame)
+			if snap is not None:
+				self.start_time = time.time()
+				self.background = Colorizer.blur(snap)
+				# self.global_variance = np.var(self.background, axis=2)
+				# self.global_variance = np.full(self.background.shape, 100.0, dtype=np.float)
+				self.global_variance = None
+				# NOTE: ^ this makes no sense and should be changed
+			elif self.background is None:
+				continue
 
-			cv2.imshow("frame", frame)
-			cv2.imshow("average", imresize(average, frame.shape, interp="nearest"))
+			self.calibrate(frame)
+			blurred = Colorizer.blur(frame)
+			diff = Colorizer.difference(self.background, blurred)
 
-			# Take picture	
-			if Colorizer.heardEnter() or cv2.waitKey(1)&0xFF == ord('s'):
-				background = average
+			a = Colorizer.pattern_variance(diff, len(Colorizer.COLORS))
+			b = 100
+			if self.global_variance is not None:
+				b = Colorizer.pattern_variance(self.global_variance, len(Colorizer.COLORS))
+
+			if a+1 <= b:
+				print 'SKIP', a, b
+				black = np.zeros(frame.shape)
+				displays['pattern'] = black
+				displays['difference'] = black
+				displays['discrete blur'] = black
+				continue
+			else:
+				print 'DISP', a, b
+
+			# difference = np.empty(blurred.shape, dtype=np.uint8)
+			# for chan in range(c):
+				# difference[:,:,chan] = np.abs(np.subtract(background[:,:,chan], average[:,:,chan]))
+
+
+			pattern = self.patternize(diff, shape=frame.shape)
+			displays['pattern'] = pattern
+			displays['difference'] = diff
+			displays['discrete blur'] = blurred
+			# cv2.imshow('pattern', imresize(pattern, frame.shape, interp="nearest"))
+			# cv2.imshow("background", imresize(background, frame.shape, interp="nearest"))
+			# cv2.imshow("difference", imresize(difference, frame.shape, interp="nearest"))
+
+			# cv2.imshow("frame", frame)
+			# cv2.imshow("average", imresize(average, frame.shape, interp="nearest"))
+
+			# # Take picture	
+			# if Colorizer.heardEnter() or cv2.waitKey(1)&0xFF == ord('s'):
+			# 	background = average
 
 		self.camera.release()
 		cv2.destroyAllWindows()
+
+	@staticmethod
+	def pattern_variance(image, split):
+		# print image.shape
+		# print image
+		boxes = product(range(split), repeat=2)
+		# variances = []
+		# for box in boxes:
+			# np.mean(np.var())
+		step = image.shape[0] / split
+		return np.mean(np.mean([np.var(image[step*b[0]:step*(b[0]+1), step*b[1]:step*(b[1]+1)]) for b in boxes]))
+
+	@staticmethod
+	def difference(a, b):
+		diff = np.abs(np.subtract(a, b)) # NOTE: not sure why this doesn't work :'(
+		# diff = np.empty(a.shape, dtype=np.uint8)
+		# for c in range(a.shape[2]):
+		# 	diff[:,:,c] = np.abs(np.subtract(a[:,:,c], b[:,:,c]))
+		return diff
 
 	def line(self, difference_image, num_cols=None, shape=None):
 		num_cols = num_cols if num_cols else len(Colorizer.COLORS)
@@ -210,14 +332,13 @@ class Colorizer:
 		# exit(1)
 		return self.state[0][0], self.state[0][1]
 
-	@staticmethod
-	def heardEnter():
-		i,o,e = select.select([sys.stdin],[],[],0.0001)
-		for s in i:
-			if s == sys.stdin:
-				input = sys.stdin.readline()
-				return True
-		return False
+def heardEnter():
+	i,o,e = select.select([sys.stdin],[],[],0.0001)
+	for s in i:
+		if s == sys.stdin:
+			input = sys.stdin.readline()
+			return True
+	return False
 
 
 def get_args():
